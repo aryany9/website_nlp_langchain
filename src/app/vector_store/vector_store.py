@@ -7,11 +7,17 @@ from termcolor import colored
 from typing import List, Optional, Dict, Any
 from hashlib import md5
 
+
 from cli.spinner import spinner
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # Connect to Qdrant
 qdrant_client = QdrantClient(
-    url=os.getenv("QDRANT_URL"),
+    host=os.getenv("QDRANT_URL"),
+    https=True,
     api_key=os.getenv("QDRANT_API_KEY")
 )
 
@@ -85,6 +91,8 @@ def compute_chunks_hash(chunks: list) -> str:
 
 @spinner("Syncing Chunks with Qdrant")
 def sync_chunks_with_qdrant(chunks: list, embedding_model, collection_name: str):
+    print("Using Qdrant URL:", os.getenv("QDRANT_URL"))
+
     """
     Ensure that the chunks stored in Qdrant are up-to-date.
     If not, update them accordingly.
@@ -97,64 +105,91 @@ def sync_chunks_with_qdrant(chunks: list, embedding_model, collection_name: str)
     print(colored("🔹 Syncing Chunks with Qdrant...", "yellow"))
 
     try:
-        collections = qdrant_client.get_collections().collections
-        collection_names = [col.name for col in collections]
+        # Get dummy embedding for vector size
+        dummy_embedding = embedding_model.embed_query("test")
+        vector_size = len(dummy_embedding)
+        
+        # Check if collection exists
+        try:
+            collections = qdrant_client.get_collections().collections
+            collection_names = [col.name for col in collections]
+            collection_exists = collection_name in collection_names
+        except Exception as e:
+            print(colored(f"⚠️ Error checking collections: {str(e)}", "yellow"))
+            collection_exists = False
 
-        collection_exists = collection_name in collection_names
+        # Generate a hash for current chunks
+        current_chunks_hash = compute_chunks_hash(chunks)
+        previous_hash = None
+        
+        # Only try to get previous hash if collection exists
+        if collection_exists:
+            try:
+                vector_store = QdrantVectorStore(
+                    client=qdrant_client,
+                    collection_name=collection_name,
+                    embedding=embedding_model
+                )
+                
+                # Try to fetch the previous hash stored in a dummy metadata
+                previous_docs = query_qdrant("__hash_check__", embedding_model, collection_name, top_k=1)
+                
+                if previous_docs:
+                    previous_hash = previous_docs[0].metadata.get("chunks_hash")
+                    print(colored(f"🔹 Found previous hash: {previous_hash}", "cyan"))
+            except Exception as e:
+                print(colored(f"⚠️ Error retrieving previous hash: {str(e)}", "yellow"))
+                # Continue with creating/updating collection
+        
+        # Check if the chunks are already up-to-date
+        if previous_hash == current_chunks_hash:
+            print(colored(f"✅ Chunks are already up-to-date in collection '{collection_name}'.", "green"))
+            return
+            
+        # If collection exists but hash doesn't match or has issues, delete it
+        if collection_exists:
+            try:
+                qdrant_client.delete_collection(collection_name=collection_name)
+                print(colored(f"🔹 Deleted old collection '{collection_name}' to update with new chunks.", "cyan"))
+            except Exception as e:
+                print(colored(f"⚠️ Error deleting collection: {str(e)}", "yellow"))
+                # Continue with creating new collection
 
+        # Create or recreate collection
+        try:
+            qdrant_client.recreate_collection(
+                collection_name=collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+            )
+            print(colored(f"🔹 Created collection '{collection_name}'.", "cyan"))
+        except Exception as e:
+            print(colored(f"❌ Failed to create collection: {str(e)}", "red"))
+            return
+
+        # Create vector store for adding documents
         vector_store = QdrantVectorStore(
             client=qdrant_client,
             collection_name=collection_name,
             embedding=embedding_model
         )
 
-        # Generate a new hash for the current chunks
-        current_chunks_hash = compute_chunks_hash(chunks)
-
-        # Try to fetch the previous hash stored in a dummy metadata
-        previous_docs = query_qdrant("__hash_check__", embedding_model, collection_name, top_k=1) if collection_exists else []
-        
-        previous_hash = None
-        if previous_docs:
-            previous_hash = previous_docs[0].metadata.get("chunks_hash")
-
-        # Check if the chunks are already up-to-date
-        if previous_hash == current_chunks_hash:
-            print(colored(f"✅ Chunks are already up-to-date in collection '{collection_name}'.", "green"))
-            return
-        else:
-            if collection_exists:
-                # Delete existing collection to replace it fully
-                qdrant_client.delete_collection(collection_name=collection_name)
-                print(colored(f"🔹 Deleted old collection '{collection_name}' to update with new chunks.", "cyan"))
-
-            # Recreate collection
-            dummy_embedding = embedding_model.embed_query("test")
-            vector_size = len(dummy_embedding)
-
-            qdrant_client.recreate_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE)
+        # Add documents (chunks)
+        documents_to_add = []
+        for chunk in chunks:
+            doc = Document(
+                page_content=chunk['content'],
+                metadata={"source": chunk['source']}
             )
-            print(colored(f"🔹 Recreated collection '{collection_name}' with updated chunks.", "cyan"))
+            documents_to_add.append(doc)
 
-            # Add documents (chunks)
-            documents_to_add = []
-            for chunk in chunks:
-                doc = Document(
-                    page_content=chunk['content'],
-                    metadata={"source": chunk['source']}
-                )
-                documents_to_add.append(doc)
+        # Add a dummy document to store the current chunks hash
+        documents_to_add.append(Document(
+            page_content="__hash_check__",
+            metadata={"chunks_hash": current_chunks_hash}
+        ))
 
-            # Add a dummy document to store the current chunks hash
-            documents_to_add.append(Document(
-                page_content="__hash_check__",
-                metadata={"chunks_hash": current_chunks_hash}
-            ))
-
-            vector_store.add_documents(documents_to_add)
-            print(colored(f"✅ Stored {len(documents_to_add)-1} chunks (and hash) in Qdrant collection '{collection_name}'.", "green"))
+        vector_store.add_documents(documents_to_add)
+        print(colored(f"✅ Stored {len(documents_to_add)-1} chunks (and hash) in Qdrant collection '{collection_name}'.", "green"))
 
     except Exception as e:
         print(colored(f"❌ Error in syncing chunks: {str(e)}", "red"))
