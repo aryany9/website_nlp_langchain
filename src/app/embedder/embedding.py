@@ -2,7 +2,7 @@
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 
-def get_embedding():
+def get_embedding_model():
     """
     Get the Google Generative AI Embeddings model.
     :return: GoogleGenerativeAIEmbeddings instance

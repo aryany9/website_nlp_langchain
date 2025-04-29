@@ -1,10 +1,13 @@
 import requests
 from termcolor import colored
 
+from cli.spinner import spinner
+
 
 # Function to verify the URL
 # This function checks if the URL is valid and reachable
 # It takes a URL as input and prints an error message if the URL is invalid or unreachable
+@spinner("Verifying URL")
 def verifyUrl(url):
     """
     Verify if the given URL is valid and reachable.
@@ -22,8 +25,9 @@ def verifyUrl(url):
         return
     # Check if the URL is valid
     if not url.startswith(("http://", "https://")):
-        print(colored("Please provide a valid URL starting with http:// or https://", "red"))
-        return
+        url = "https://" + url
+        # print(colored("Please provide a valid URL starting with http:// or https://", "red"))
+        # return
     # Check if the URL is reachable
     try:
         response = requests.get(url)

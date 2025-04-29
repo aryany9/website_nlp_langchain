@@ -5,6 +5,9 @@ from langchain_community.document_loaders.recursive_url_loader import RecursiveU
 from bs4 import BeautifulSoup as Soup
 from termcolor import colored
 
+from cli.spinner import spinner
+
+@spinner("Creating Chunks")
 def create_chunks(url: str, max_chunk_size: int = 1000, overlap_size: int = 200) -> list:
     """
     Chunk a website into smaller parts for processing.

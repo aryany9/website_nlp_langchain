@@ -1,7 +1,7 @@
 from termcolor import colored
 from src.app.LLM.gemini import get_answer_from_llm
-from src.app.vector_store.vector_store import create_embeddings_in_qdrant, get_context_for_llm
-from src.app.embedder.embedding import get_embedding
+from src.app.vector_store.vector_store import create_embeddings_in_qdrant, get_context_for_llm, sync_chunks_with_qdrant
+from src.app.embedder.embedding import get_embedding_model
 from src.app.chunker.website_chunking import create_chunks
 from src.utils.functions import verifyUrl
 
@@ -15,10 +15,10 @@ def rag():
     chunks = create_chunks(url)
     
     # Embedding
-    embedding = get_embedding()
+    embedding = get_embedding_model()
 
     # Storing the chunks
-    # create_embeddings_in_qdrant(chunks, embedding, collection_name=domainName)
+    sync_chunks_with_qdrant(chunks, embedding, collection_name=domainName)
     query = input(colored("Enter your query: ", "green"))
 
     retrieve = get_context_for_llm(query, embedding, collection_name=domainName)
