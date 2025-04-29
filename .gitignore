@@ -5,8 +5,8 @@ build/
 dist/
 wheels/
 *.egg-info
+src/app/chunker/chunks/*
 
 # Virtual environments
 .venv
 .env
-src/app/chunker/chunks/*
